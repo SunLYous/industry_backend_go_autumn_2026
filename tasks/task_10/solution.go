@@ -90,48 +90,36 @@ func (r *inMemoryTaskRepo) SetDone(id string, done bool) (Task, error) {
 	if !ok {
 		return Task{}, ErrNotFound
 	}
-
-	if task.Done != done {
-		task.Done = done
-		task.UpdatedAt = r.clock.Now()
-		r.tasks[id] = task
+	if task.Done == done {
+		return task, nil
 	}
+
+	task.Done = done
+	task.UpdatedAt = r.clock.Now()
+	r.tasks[id] = task
 
 	return task, nil
 }
 
-type httpHandler struct{ repo TaskRepo }
+type httpHandler struct {
+	repo TaskRepo
+	mux  *http.ServeMux
+}
 
 func NewHTTPHandler(repo TaskRepo) http.Handler {
-	return &httpHandler{repo: repo}
+	h := &httpHandler{repo: repo, mux: http.NewServeMux()}
+	h.mux.HandleFunc("POST /tasks", h.handleCreate)
+	h.mux.HandleFunc("GET /tasks", h.handleList)
+	h.mux.HandleFunc("GET /tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		h.handleGet(w, r.PathValue("id"))
+	})
+	h.mux.HandleFunc("PATCH /tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
+		h.handlePatch(w, r, r.PathValue("id"))
+	})
+	return h
 }
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/tasks" {
-		switch r.Method {
-		case http.MethodPost:
-			h.handleCreate(w, r)
-		case http.MethodGet:
-			h.handleList(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-
-	id, found := strings.CutPrefix(r.URL.Path, "/tasks/")
-	if !found || id == "" || strings.Contains(id, "/") {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		h.handleGet(w, r, id)
-	case http.MethodPatch:
-		h.handlePatch(w, r, id)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	h.mux.ServeHTTP(w, r)
 }
 func (h *httpHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -152,7 +140,7 @@ func (h *httpHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, task)
 	}
 }
-func (h *httpHandler) handleGet(w http.ResponseWriter, r *http.Request, id string) {
+func (h *httpHandler) handleGet(w http.ResponseWriter, id string) {
 	task, ok := h.repo.Get(id)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)

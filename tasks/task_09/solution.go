@@ -41,21 +41,17 @@ func ParallelMap[T any, R any](ctx context.Context, workers int, in []T, fn func
 		})
 	}
 
-	canceled := false
-dispatch:
-	for i := range in {
+	for i := 0; i < len(in) && ctx.Err() == nil; i++ {
 		select {
 		case jobs <- i:
 		case <-ctx.Done():
-			canceled = true
-			break dispatch
 		}
 	}
 	close(jobs)
 	wg.Wait()
 
-	if canceled {
-		return nil, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	return results, nil
